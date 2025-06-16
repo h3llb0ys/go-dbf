@@ -2,10 +2,11 @@ package godbf
 
 import (
 	"errors"
-	"github.com/axgle/mahonia"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/axgle/mahonia"
 )
 
 const (
@@ -181,6 +182,10 @@ func (es *encodingSupport) UseEncoding(encoding string) {
 // imageCache keeps a dbase table in memory as its byte array encoding
 type imageCache struct {
 	dataStore []byte
+}
+
+func (dt *DbfTable) DataStore() []byte {
+	return dt.dataStore
 }
 
 func (dt *DbfTable) AddBooleanField(fieldName string) (err error) {

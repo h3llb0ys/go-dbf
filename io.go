@@ -5,7 +5,7 @@ package godbf
 
 import (
 	"fmt"
-	"os"
+	"io"
 )
 
 // NewFromFile creates a DbfTable, reading it from a file with the given file name, expecting the supplied encoding.
@@ -50,8 +50,8 @@ func SaveToFile(dt *DbfTable, filename string) (saveErr error) {
 	return saveErr
 }
 
-func writeContent(dt *DbfTable, f *os.File) error {
-	if _, dsErr := f.Write(dt.dataStore); dsErr != nil {
+func writeContent(dt *DbfTable, w io.Writer) error {
+	if _, dsErr := w.Write(dt.dataStore); dsErr != nil {
 		return dsErr
 	}
 	return nil
