@@ -511,3 +511,188 @@ func TestDbfTable_MiddleRowIsDeleted_(t *testing.T) {
 	g.Expect(tableUnderTest.RowIsDeleted(1)).To(BeTrue())
 	g.Expect(tableUnderTest.RowIsDeleted(2)).To(BeTrue())
 }
+
+// dBASE III Compliance Tests
+
+// TestDbfTable_DbaseIII_RecordInitializedWithSpaces verifies that new records
+// are initialized with spaces (0x20) per dBASE III spec, not zeros.
+func TestDbfTable_DbaseIII_RecordInitializedWithSpaces(t *testing.T) {
+	g := NewGomegaWithT(t)
+
+	tableUnderTest := New(testEncoding)
+	tableUnderTest.AddTextField("textField", 10)
+	tableUnderTest.AddNumberField("numField", 5, 0)
+	tableUnderTest.AddBooleanField("boolField")
+	tableUnderTest.AddDateField("dateField")
+
+	recordIndex, _ := tableUnderTest.AddNewRecord()
+
+	// Get raw bytes for the record
+	recordOffset := int(tableUnderTest.numberOfBytesInHeader) + recordIndex*int(tableUnderTest.lengthOfEachRecord)
+	recordBytes := tableUnderTest.dataStore[recordOffset : recordOffset+int(tableUnderTest.lengthOfEachRecord)]
+
+	// First byte should be 0x20 (active record marker)
+	g.Expect(recordBytes[0]).To(Equal(byte(0x20)), "Record deletion flag should be 0x20 (active)")
+
+	// All field bytes should be spaces (0x20), not zeros
+	for i := 1; i < len(recordBytes); i++ {
+		g.Expect(recordBytes[i]).To(Equal(byte(0x20)), fmt.Sprintf("Byte at offset %d should be 0x20 (space), got 0x%02X", i, recordBytes[i]))
+	}
+}
+
+// TestDbfTable_DbaseIII_LogicalFieldInitialization verifies that logical fields
+// are initialized to space (0x20), not 'F' or 0x00.
+func TestDbfTable_DbaseIII_LogicalFieldInitialization(t *testing.T) {
+	g := NewGomegaWithT(t)
+
+	tableUnderTest := New(testEncoding)
+	tableUnderTest.AddBooleanField("boolField")
+
+	recordIndex, _ := tableUnderTest.AddNewRecord()
+
+	// Get raw byte for the logical field
+	recordOffset := int(tableUnderTest.numberOfBytesInHeader) + recordIndex*int(tableUnderTest.lengthOfEachRecord)
+	logicalFieldByte := tableUnderTest.dataStore[recordOffset+1] // +1 to skip deletion flag
+
+	// Per dBASE III spec, uninitialized logical should be space (0x20)
+	g.Expect(logicalFieldByte).To(Equal(byte(0x20)), "Logical field should be initialized to space (0x20)")
+}
+
+// TestDbfTable_DbaseIII_DateFieldEmpty verifies that empty date fields
+// contain 8 spaces, not "00000000".
+func TestDbfTable_DbaseIII_DateFieldEmpty(t *testing.T) {
+	g := NewGomegaWithT(t)
+
+	tableUnderTest := New(testEncoding)
+	tableUnderTest.AddDateField("dateField")
+
+	recordIndex, _ := tableUnderTest.AddNewRecord()
+
+	// Get raw bytes for the date field (8 bytes)
+	recordOffset := int(tableUnderTest.numberOfBytesInHeader) + recordIndex*int(tableUnderTest.lengthOfEachRecord)
+	dateFieldBytes := tableUnderTest.dataStore[recordOffset+1 : recordOffset+1+8] // +1 to skip deletion flag
+
+	// Per dBASE III spec, empty date should be 8 spaces
+	expectedDateBytes := []byte("        ") // 8 spaces
+	g.Expect(dateFieldBytes).To(Equal(expectedDateBytes), "Empty date field should be 8 spaces")
+}
+
+// TestDbfTable_DbaseIII_NumericFieldEmpty verifies that empty numeric fields
+// contain spaces, not zeros or "0".
+func TestDbfTable_DbaseIII_NumericFieldEmpty(t *testing.T) {
+	g := NewGomegaWithT(t)
+
+	tableUnderTest := New(testEncoding)
+	tableUnderTest.AddNumberField("numField", 10, 2)
+
+	recordIndex, _ := tableUnderTest.AddNewRecord()
+
+	// Get raw bytes for the numeric field (10 bytes)
+	recordOffset := int(tableUnderTest.numberOfBytesInHeader) + recordIndex*int(tableUnderTest.lengthOfEachRecord)
+	numFieldBytes := tableUnderTest.dataStore[recordOffset+1 : recordOffset+1+10]
+
+	// Per dBASE III spec, empty numeric should be all spaces
+	for i, b := range numFieldBytes {
+		g.Expect(b).To(Equal(byte(0x20)), fmt.Sprintf("Numeric field byte %d should be space (0x20), got 0x%02X", i, b))
+	}
+}
+
+// TestDbfTable_DbaseIII_CharacterFieldEmpty verifies that empty character fields
+// contain spaces.
+func TestDbfTable_DbaseIII_CharacterFieldEmpty(t *testing.T) {
+	g := NewGomegaWithT(t)
+
+	tableUnderTest := New(testEncoding)
+	tableUnderTest.AddTextField("textField", 20)
+
+	recordIndex, _ := tableUnderTest.AddNewRecord()
+
+	// Get raw bytes for the character field
+	recordOffset := int(tableUnderTest.numberOfBytesInHeader) + recordIndex*int(tableUnderTest.lengthOfEachRecord)
+	textFieldBytes := tableUnderTest.dataStore[recordOffset+1 : recordOffset+1+20]
+
+	// Per dBASE III spec, empty character field should be all spaces
+	for i, b := range textFieldBytes {
+		g.Expect(b).To(Equal(byte(0x20)), fmt.Sprintf("Character field byte %d should be space (0x20), got 0x%02X", i, b))
+	}
+}
+
+// TestDbfTable_DbaseIII_EOFMarkerAtEnd verifies that EOF marker (0x1A) is always
+// at the end of the file, not before records.
+func TestDbfTable_DbaseIII_EOFMarkerAtEnd(t *testing.T) {
+	g := NewGomegaWithT(t)
+
+	tableUnderTest := New(testEncoding)
+	tableUnderTest.AddTextField("textField", 10)
+
+	// Add multiple records
+	for i := 0; i < 3; i++ {
+		tableUnderTest.AddNewRecord()
+	}
+
+	// EOF marker should be the last byte
+	lastByte := tableUnderTest.dataStore[len(tableUnderTest.dataStore)-1]
+	g.Expect(lastByte).To(Equal(byte(0x1A)), "EOF marker (0x1A) should be at the end of dataStore")
+
+	// Verify there's only one EOF marker (not one before each record)
+	eofCount := 0
+	for _, b := range tableUnderTest.dataStore {
+		if b == 0x1A {
+			eofCount++
+		}
+	}
+	g.Expect(eofCount).To(Equal(1), "There should be exactly one EOF marker")
+}
+
+// TestDbfTable_DbaseIII_FileSignature verifies the file signature is 0x03 for dBASE III.
+func TestDbfTable_DbaseIII_FileSignature(t *testing.T) {
+	g := NewGomegaWithT(t)
+
+	tableUnderTest := New(testEncoding)
+	tableUnderTest.AddTextField("textField", 10)
+
+	// File signature should be 0x03 (dBASE III without memo)
+	g.Expect(tableUnderTest.dataStore[0]).To(Equal(byte(0x03)), "File signature should be 0x03 for dBASE III")
+}
+
+// TestDbfTable_DbaseIII_NumericRightAligned verifies numeric values are right-aligned
+// with spaces on the left.
+func TestDbfTable_DbaseIII_NumericRightAligned(t *testing.T) {
+	g := NewGomegaWithT(t)
+
+	tableUnderTest := New(testEncoding)
+	tableUnderTest.AddNumberField("numField", 10, 0)
+
+	recordIndex, _ := tableUnderTest.AddNewRecord()
+	tableUnderTest.SetFieldValueByName(recordIndex, "numField", "42")
+
+	// Get raw bytes for the numeric field
+	recordOffset := int(tableUnderTest.numberOfBytesInHeader) + recordIndex*int(tableUnderTest.lengthOfEachRecord)
+	numFieldBytes := tableUnderTest.dataStore[recordOffset+1 : recordOffset+1+10]
+
+	// "42" should be right-aligned: "        42"
+	expectedBytes := []byte("        42")
+	g.Expect(numFieldBytes).To(Equal(expectedBytes), "Numeric '42' should be right-aligned with spaces on left")
+}
+
+// TestDbfTable_DbaseIII_HeaderReservedBytesZero verifies that reserved header bytes
+// (offset 12-31, except 28-29) are zeros.
+func TestDbfTable_DbaseIII_HeaderReservedBytesZero(t *testing.T) {
+	g := NewGomegaWithT(t)
+
+	tableUnderTest := New(testEncoding)
+	tableUnderTest.AddTextField("textField", 10)
+
+	// Bytes 12-27 should be zeros (reserved)
+	for i := 12; i <= 27; i++ {
+		g.Expect(tableUnderTest.dataStore[i]).To(Equal(byte(0x00)),
+			fmt.Sprintf("Reserved header byte at offset %d should be 0x00", i))
+	}
+
+	// Byte 28 is table flags, should be 0x00 for no memo
+	g.Expect(tableUnderTest.dataStore[28]).To(Equal(byte(0x00)), "Table flags (byte 28) should be 0x00")
+
+	// Bytes 30-31 should be zeros (reserved)
+	g.Expect(tableUnderTest.dataStore[30]).To(Equal(byte(0x00)), "Reserved byte 30 should be 0x00")
+	g.Expect(tableUnderTest.dataStore[31]).To(Equal(byte(0x00)), "Reserved byte 31 should be 0x00")
+}

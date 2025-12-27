@@ -377,6 +377,7 @@ func (dt *DbfTable) DecimalPlacesInField(fieldName string) (uint8, error) {
 }
 
 // AddNewRecord adds a new empty record to the table, and returns the index number of the record.
+// Per dBASE III spec, all field bytes are initialized to spaces (0x20).
 func (dt *DbfTable) AddNewRecord() (newRecordNumber int, addErr error) {
 	if dt.lengthOfEachRecord <= 1 {
 		return -1, errors.New("attempted to add record with no fields defined")
@@ -384,9 +385,21 @@ func (dt *DbfTable) AddNewRecord() (newRecordNumber int, addErr error) {
 
 	dt.schemaLocked = true
 
+	// Remove EOF marker from end before adding record
+	if len(dt.dataStore) > 0 && dt.dataStore[len(dt.dataStore)-1] == eofMarker {
+		dt.dataStore = dt.dataStore[:len(dt.dataStore)-1]
+	}
+
+	// Create new record initialized with spaces (0x20) per dBASE III spec
 	newRecord := make([]byte, dt.lengthOfEachRecord)
+	for i := range newRecord {
+		newRecord[i] = blank
+	}
 	newRecord[recordDeletionFlagIndex] = recordIsActive
 	dt.dataStore = append(dt.dataStore, newRecord...)
+
+	// Re-add EOF marker at the end
+	dt.dataStore = append(dt.dataStore, eofMarker)
 
 	// since row numbers are "0" based first we set newRecordNumber
 	// and then increment number of records in dbase table
@@ -398,7 +411,6 @@ func (dt *DbfTable) AddNewRecord() (newRecordNumber int, addErr error) {
 	dt.dataStore[5] = s[1]
 	dt.dataStore[6] = s[2]
 	dt.dataStore[7] = s[3]
-	//fmt.Printf("Number of rows after:%d\n", dt.numberOfRecords)
 
 	return newRecordNumber, nil
 }
